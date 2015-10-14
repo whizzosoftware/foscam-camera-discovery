@@ -36,15 +36,17 @@ public class SearchResponse extends Order {
             data
         );
 
-        cameraId = new String(data, offset, 13).trim();
-        cameraName = new String(data, offset + 13, 21).trim();
+        if (data != null) {
+            cameraId = new String(data, offset, 13).trim();
+            cameraName = new String(data, offset + 13, 21).trim();
 
-        byte[] address = new byte[4];
-        address[0] = data[offset + 34];
-        address[1] = data[offset + 35];
-        address[2] = data[offset + 36];
-        address[3] = data[offset + 37];
-        this.address = InetAddress.getByAddress(address);
+            byte[] address = new byte[4];
+            address[0] = data[offset + 34];
+            address[1] = data[offset + 35];
+            address[2] = data[offset + 36];
+            address[3] = data[offset + 37];
+            this.address = InetAddress.getByAddress(address);
+        }
     }
 
     public String getCameraId() {

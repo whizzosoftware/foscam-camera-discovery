@@ -7,34 +7,59 @@
  *******************************************************************************/
 package com.whizzosoftware.foscam.camera.discovery;
 
-import com.whizzosoftware.foscam.camera.model.FoscamCamera;
 import com.whizzosoftware.foscam.camera.protocol.*;
+import io.netty.bootstrap.Bootstrap;
+import io.netty.channel.*;
+import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.socket.DatagramChannel;
+import io.netty.channel.socket.DatagramPacket;
+import io.netty.channel.socket.nio.NioDatagramChannel;
+import io.netty.util.concurrent.ScheduledFuture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.net.*;
+import java.net.InetSocketAddress;
+import java.util.concurrent.TimeUnit;
 
 /**
- * A class that provides network discovery of Foscam cameras.
+ * A class that provides network discovery of Foscam cameras. It performs the following functions:
+ *
+ * 1. Send 3 discovery search requests spaced SEARCH_REQUEST_INITIAL_FREQUENCY_SECONDS apart. This is to reduce the
+ *    possibility that a working camera misses a search request since UDP is unreliable.
+ * 2. Send a discovery search request every SEARCH_REQUEST_FREQUENCY_SECONDS apart. This is to keep tabs on cameras
+ *    as they come and go.
+ * 3. Invoke the onCameraDiscovered method of the specified CameraDiscoveryListener whenever a search response is
+ *    received. It is up to the listener to recognize and ignore duplicate responses.
  *
  * @author Dan Noguerol
  */
-public class FoscamCameraDiscovery implements Runnable, ProtocolParserListener {
+public class FoscamCameraDiscovery implements SearchRequestSender {
     private final Logger logger = LoggerFactory.getLogger(getClass());
 
-    private DatagramSocket socket;
-    private FoscamCameraDiscoveryListener listener;
-    private ProtocolParser parser;
-    private Thread discoveryThread;
+    private final static int SEARCH_REQUEST_INITIAL_FREQUENCY_SECONDS = 2;
+    private final static int SEARCH_REQUEST_FREQUENCY_SECONDS = 60;
 
-    public FoscamCameraDiscovery(FoscamCameraDiscoveryListener listener) throws SocketException {
-        socket = new DatagramSocket();
-        socket.setBroadcast(true);
+    private DatagramChannel channel;
+    private CameraDiscoveryListener listener;
+    private Bootstrap bootstrap;
+    private EventLoopGroup group;
+    private SearchRequestRunnable searchRequestRunnable;
+    private ScheduledFuture searchFuture;
 
+    /**
+     * Constructor.
+     *
+     * @param listener the listener to invoke when cameras are discovered
+     */
+    public FoscamCameraDiscovery(CameraDiscoveryListener listener) {
         this.listener = listener;
 
-        parser = new ProtocolParser(this);
+        group = new NioEventLoopGroup(1);
+        bootstrap = new Bootstrap().
+            group(group).
+            channel(NioDatagramChannel.class).
+            option(ChannelOption.SO_BROADCAST, true);
     }
 
     /**
@@ -43,66 +68,62 @@ public class FoscamCameraDiscovery implements Runnable, ProtocolParserListener {
      * @throws IOException on failure
      */
     public void start() throws IOException {
-        discoveryThread = new Thread(this);
-        discoveryThread.setName("Foscam Camera Discovery");
-        discoveryThread.start();
+        searchRequestRunnable = new SearchRequestRunnable(this);
 
-        sendSearchRequest();
+        // set up the inbound channel handler
+        bootstrap.handler(new ChannelInitializer<Channel>() {
+            @Override
+            protected void initChannel(Channel channel) throws Exception {
+                ChannelPipeline pipeline = channel.pipeline();
+                pipeline.addLast(new DatagramToByteBufHandler()); // convert an incoming DatagramPacket into a ByteBuf
+                pipeline.addLast(new OrderDecoder()); // convert an incoming ByteBuf into an Order
+                pipeline.addLast(new InboundOrderHandler(listener)); // handle incoming Orders
+            }
+        });
+
+        // bind to the address
+        ChannelFuture cf = bootstrap.bind(new InetSocketAddress(0));
+        cf.addListener(new ChannelFutureListener() {
+            @Override
+            public void operationComplete(ChannelFuture channelFuture) throws Exception {
+                if (channelFuture.isSuccess()) {
+                    channel = (DatagramChannel)channelFuture.channel();
+
+                    // perform initial search request
+                    group.execute(searchRequestRunnable);
+
+                    // schedule two quick follow-up search requests to make sure a camera didn't miss the first request
+                    group.schedule(searchRequestRunnable, SEARCH_REQUEST_INITIAL_FREQUENCY_SECONDS, TimeUnit.SECONDS);
+                    group.schedule(searchRequestRunnable, SEARCH_REQUEST_INITIAL_FREQUENCY_SECONDS * 2, TimeUnit.SECONDS);
+
+                    // set up a recurring search request so we can keep track of cameras coming/going
+                    searchFuture = group.scheduleAtFixedRate(
+                        searchRequestRunnable,
+                        SEARCH_REQUEST_INITIAL_FREQUENCY_SECONDS * 2 + SEARCH_REQUEST_FREQUENCY_SECONDS,
+                        SEARCH_REQUEST_FREQUENCY_SECONDS,
+                        TimeUnit.SECONDS
+                    );
+                } else {
+                    logger.error("Bind attempt failed", channelFuture.cause());
+                }
+            }
+        });
     }
 
     /**
      * Stop the discovery process.
      */
     public void stop() {
-        discoveryThread.interrupt();
-        socket.close();
+        searchFuture.cancel(true);
+        channel.close();
     }
 
     /**
      * Send a new search request.
-     *
-     * @throws IOException on failure
      */
-    public void sendSearchRequest() throws IOException {
+    public void sendSearchRequest() {
         SearchRequest searchReq = new SearchRequest();
-        byte[] b = searchReq.toBytes();
-        socket.send(new DatagramPacket(b, 0, b.length, InetAddress.getByName("255.255.255.255"), 10000));
-    }
-
-    @Override
-    public void run() {
-        logger.debug("Starting discovery thread");
-
-        while (!Thread.currentThread().isInterrupted()) {
-            byte[] buf = new byte[1024];
-            DatagramPacket packet = new DatagramPacket(buf, buf.length);
-            logger.trace("Waiting for data");
-            try {
-                socket.receive(packet);
-                logger.trace("Received {} bytes with offset {}", packet.getLength(), packet.getOffset());
-                parser.addBytes(packet.getData(), packet.getOffset(), packet.getLength());
-            } catch (SocketException e) {
-                if (!socket.isClosed()) {
-                    logger.error("Error receiving from socket", e);
-                }
-                break;
-            } catch (IOException ioe) {
-                logger.error("Error reading from socket", ioe);
-            } catch (Exception e) {
-                logger.error("Error processing camera discovery", e);
-            }
-        }
-
-        logger.debug("Discovery thread exiting");
-    }
-
-    @Override
-    public void onOrder(Order order) {
-        if (order instanceof SearchResponse) {
-            SearchResponse sr = (SearchResponse)order;
-            if (listener != null) {
-                listener.onCameraDiscovered(new FoscamCamera(sr.getCameraId(), sr.getCameraName(), sr.getAddress()));
-            }
-        }
+        logger.debug("Sending search request");
+        channel.writeAndFlush(new DatagramPacket(searchReq.toByteBuf(), new InetSocketAddress("255.255.255.255", 10000)));
     }
 }

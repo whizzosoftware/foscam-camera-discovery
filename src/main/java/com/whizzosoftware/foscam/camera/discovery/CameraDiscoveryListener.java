@@ -5,18 +5,22 @@
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
  *******************************************************************************/
-package com.whizzosoftware.foscam.camera.protocol;
+package com.whizzosoftware.foscam.camera.discovery;
+
+import java.net.InetAddress;
 
 /**
- * A listener for Order messages from the parser.
+ * A listener for Foscam camera discovery events.
  *
  * @author Dan Noguerol
  */
-public interface ProtocolParserListener {
+public interface CameraDiscoveryListener {
     /**
-     * Callback when an Order is received.
+     * Callback when a camera is discovered.
      *
-     * @param order the received Order object
+     * @param cameraId the ID of the camera that was discovered
+     * @param cameraName the name of the camera that was discovered
+     * @param address the source address of the discovered camera
      */
-    public void onOrder(Order order);
+    void onCameraDiscovered(String cameraId, String cameraName, InetAddress address);
 }

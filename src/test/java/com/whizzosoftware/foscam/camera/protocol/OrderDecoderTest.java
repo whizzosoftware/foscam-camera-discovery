@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2014 Whizzo Software, LLC.
+ * Copyright (c) 2015 Whizzo Software, LLC.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -7,14 +7,16 @@
  *******************************************************************************/
 package com.whizzosoftware.foscam.camera.protocol;
 
+import io.netty.buffer.Unpooled;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
-public class ProtocolParserTest {
+import java.util.ArrayList;
+import java.util.List;
+
+public class OrderDecoderTest {
     @Test
-    public void testFullOrder() {
-        MockProtocolParserListener listener = new MockProtocolParserListener();
-        ProtocolParser parser = new ProtocolParser(listener);
+    public void testValidDatagram() throws Exception {
         byte[] b = new byte[] {
             'M', 'O', '_', 'I', // camera operate protocol
             1, 0, // operation code
@@ -27,13 +29,12 @@ public class ProtocolParserTest {
             (byte)192, (byte)168, (byte)0, (byte)150
         };
 
-        parser.addBytes(b, 0, b.length);
+        List<Object> orders = new ArrayList<>();
+        OrderDecoder decoder = new OrderDecoder();
 
-        assertEquals(1, listener.getOrders().size());
-        assertTrue(listener.getOrders().get(0) instanceof SearchResponse);
-        SearchResponse sr = (SearchResponse)listener.getOrders().get(0);
-        assertEquals("camera1", sr.getCameraId());
-        assertEquals("My Camera", sr.getCameraName());
-        assertEquals("192.168.0.150", sr.getAddress().getHostAddress());
+        decoder.decode(null, Unpooled.copiedBuffer(b), orders);
+
+        assertEquals(1, orders.size());
+        assertTrue(orders.get(0) instanceof SearchResponse);
     }
 }
