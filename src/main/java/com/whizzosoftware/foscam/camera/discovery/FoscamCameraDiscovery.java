@@ -38,12 +38,13 @@ public class FoscamCameraDiscovery implements SearchRequestSender {
     private final Logger logger = LoggerFactory.getLogger(getClass());
 
     private final static int SEARCH_REQUEST_INITIAL_FREQUENCY_SECONDS = 2;
-    private final static int SEARCH_REQUEST_FREQUENCY_SECONDS = 60;
+    private final static int DEFAULT_SEARCH_REQUEST_FREQUENCY_SECONDS = 60;
 
     private DatagramChannel channel;
     private CameraDiscoveryListener listener;
     private Bootstrap bootstrap;
     private EventLoopGroup group;
+    private int getSearchRequestFrequencySeconds;
     private SearchRequestRunnable searchRequestRunnable;
     private ScheduledFuture searchFuture;
 
@@ -53,7 +54,18 @@ public class FoscamCameraDiscovery implements SearchRequestSender {
      * @param listener the listener to invoke when cameras are discovered
      */
     public FoscamCameraDiscovery(CameraDiscoveryListener listener) {
+        this(listener, DEFAULT_SEARCH_REQUEST_FREQUENCY_SECONDS);
+    }
+
+    /**
+     * Constructor.
+     *
+     * @param listener the listener to invoke when cameras are discovered
+     * @param searchRequestFrequencySeconds the frequency at which to send out discovery requests
+     */
+    public FoscamCameraDiscovery(CameraDiscoveryListener listener, int searchRequestFrequencySeconds) {
         this.listener = listener;
+        this.getSearchRequestFrequencySeconds = searchRequestFrequencySeconds;
 
         group = new NioEventLoopGroup(1);
         bootstrap = new Bootstrap().
@@ -99,8 +111,8 @@ public class FoscamCameraDiscovery implements SearchRequestSender {
                     // set up a recurring search request so we can keep track of cameras coming/going
                     searchFuture = group.scheduleAtFixedRate(
                         searchRequestRunnable,
-                        SEARCH_REQUEST_INITIAL_FREQUENCY_SECONDS * 2 + SEARCH_REQUEST_FREQUENCY_SECONDS,
-                        SEARCH_REQUEST_FREQUENCY_SECONDS,
+                        SEARCH_REQUEST_INITIAL_FREQUENCY_SECONDS * 2 + getSearchRequestFrequencySeconds,
+                        getSearchRequestFrequencySeconds,
                         TimeUnit.SECONDS
                     );
                 } else {
