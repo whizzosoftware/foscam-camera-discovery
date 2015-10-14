@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.whizzosoftware.foscam</groupId>
     <artifactId>foscam-camera-discovery</artifactId>
-    <version>0.1.3-SNAPSHOT</version>
+    <version>0.2.0</version>
     <packaging>jar</packaging>
     <name>Foscam Camera Discovery</name>
     <dependencies>
